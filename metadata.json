@@ -1,0 +1,7 @@
+{
+  "name": "LexiDiff: Advanced AI Legal Comparator",
+  "description": "Professional-grade legal document comparison tool featuring advanced OCR for PDFs, images, and physical documents with deep AI risk analysis.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
