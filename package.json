@@ -1,4 +1,3 @@
-
 {
   "name": "lexidiff-ai",
   "private": true,
@@ -11,11 +10,12 @@
   },
   "dependencies": {
     "@google/genai": "^1.34.0",
+    "mammoth": "1.6.0",
     "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "mammoth": "1.6.0"
+    "react-dom": "^19.2.3"
   },
   "devDependencies": {
+    "@types/node": "^25.0.3",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
