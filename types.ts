@@ -4,6 +4,17 @@ export interface DiffChange {
   value: string;
 }
 
+export interface DiffExplanation {
+  index: number;
+  explanation: string;
+}
+
+export interface AlignedRow {
+  left: DiffChange | null;
+  right: DiffChange | null;
+  explanation?: string;
+}
+
 export interface UserComment {
   id: string;
   diffIndex: number;

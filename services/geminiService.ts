@@ -1,56 +1,92 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { LegalAnalysis } from "../types";
+import { LegalAnalysis, AlignedRow } from "../types";
 
-// Helper to get a fresh instance of GoogleGenAI using the environment API key directly
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const extractTextFromBlob = async (base64Data: string, mimeType: string): Promise<string> => {
   const ai = getAI();
-  
-  // Using gemini-3-flash-preview for the basic text extraction task
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
     contents: {
       parts: [
-        {
-          inlineData: {
-            data: base64Data,
-            mimeType: mimeType
-          }
-        },
-        {
-          text: `Extract all text from this document with extreme precision. 
-          Preserve all formatting, legal numbering (e.g. 1.1, 2(a)), and signature blocks.
-          Ensure that specialized titles and names (e.g. 'Pastor Dr.') are captured exactly as written.
-          Return ONLY the raw extracted text.`
-        }
+        { inlineData: { data: base64Data, mimeType: mimeType } },
+        { text: `Extract text precisely. Preserve formatting and legal numbering. Return ONLY extracted text.` }
       ]
     }
   });
-
-  // response.text is a property getter, do not call it as a function
   return response.text || "";
+};
+
+export const getSmartExplanations = async (rows: AlignedRow[]): Promise<Record<number, string>> => {
+  const ai = getAI();
+  
+  // Extract segments that actually contain changes to minimize tokens and focus intelligence
+  const relevantChanges = rows
+    .map((row, index) => ({ 
+      index, 
+      left: row.left?.value, 
+      right: row.right?.value,
+      isChange: row.left?.type !== 'unchanged' || row.right?.type !== 'unchanged'
+    }))
+    .filter(c => c.isChange && (c.left?.trim() || c.right?.trim()))
+    .slice(0, 40); // Process up to 40 change clusters for balance between depth and speed
+
+  if (relevantChanges.length === 0) return {};
+
+  const prompt = `You are a high-level legal consultant. Analyze these specific textual differences between two versions of a document.
+  For each segment, provide a concise, 1-sentence explanation of why this change matters legally or commercially.
+  
+  DIFFERENCES TO ANALYZE:
+  ${relevantChanges.map(c => `[ID ${c.index}] Version A: "${c.left || '(None/Deleted)'}" -> Version B: "${c.right || '(None/Added)'}"`).join('\n')}
+
+  Return a JSON array of objects, each containing an "id" (the ID integer from the input list) and an "insight" (your explanation string).`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-pro-preview",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.INTEGER, description: "The index ID provided in the prompt cluster." },
+              insight: { type: Type.STRING, description: "The concise legal explanation of the difference." }
+            },
+            required: ["id", "insight"]
+          }
+        }
+      }
+    });
+
+    const text = response.text;
+    if (!text) return {};
+    
+    // Parse array and map back to record
+    const parsed: Array<{id: number, insight: string}> = JSON.parse(text);
+    const result: Record<number, string> = {};
+    parsed.forEach(item => {
+      result[item.id] = item.insight;
+    });
+    
+    return result;
+  } catch (error) {
+    console.error("AI Intelligence Error:", error);
+    // Return empty instead of throwing to maintain app stability
+    return {};
+  }
 };
 
 export const analyzeDocuments = async (doc1: string, doc2: string): Promise<LegalAnalysis> => {
   const ai = getAI();
-  
-  const prompt = `You are an elite legal counsel. Compare these two versions of a contract:
+  const prompt = `Elite legal counsel analysis of version shifts:
   Document 1: ${doc1}
   Document 2: ${doc2}
-  
-  Focus on identifying changes in:
-  1. Financial Obligations: Payment terms, late fees, increases.
-  2. Liability & Indemnity: Caps on damages, hold harmless clauses.
-  3. Termination: Notice periods, "for cause" vs "for convenience" changes.
-  4. IP & Confidentiality: Scope of ownership or data usage rights.
-  5. Governing Law: Jurisdiction shifts.
+  Return JSON report covering Financial, Liability, Termination, IP, and Law shifts.`;
 
-  Identify specifically what was added or removed and evaluate the risk shift.
-  Return the analysis as JSON.`;
-
-  // Using gemini-3-pro-preview for complex legal reasoning and analysis
   const response = await ai.models.generateContent({
     model: "gemini-3-pro-preview",
     contents: prompt,
@@ -60,7 +96,7 @@ export const analyzeDocuments = async (doc1: string, doc2: string): Promise<Lega
         type: Type.OBJECT,
         properties: {
           summary: { type: Type.STRING },
-          contractType: { type: Type.STRING, description: "Type of contract detected (e.g. MSA, NDA, Employment)" },
+          contractType: { type: Type.STRING },
           keyChanges: {
             type: Type.ARRAY,
             items: {
@@ -69,7 +105,7 @@ export const analyzeDocuments = async (doc1: string, doc2: string): Promise<Lega
                 clause: { type: Type.STRING },
                 impact: { type: Type.STRING, enum: ['positive', 'negative', 'neutral'] },
                 description: { type: Type.STRING },
-                riskScore: { type: Type.INTEGER, description: "Risk level from 1 to 10" }
+                riskScore: { type: Type.INTEGER }
               },
               required: ["clause", "impact", "description", "riskScore"]
             }
@@ -93,13 +129,8 @@ export const analyzeDocuments = async (doc1: string, doc2: string): Promise<Lega
   });
 
   try {
-    const text = response.text;
-    if (!text) {
-      throw new Error("Received empty response from Gemini API");
-    }
-    return JSON.parse(text) as LegalAnalysis;
+    return JSON.parse(response.text || "{}") as LegalAnalysis;
   } catch (error) {
-    console.error("Failed to parse Gemini response as JSON", error);
     throw new Error("The legal analysis could not be parsed successfully.");
   }
 };
